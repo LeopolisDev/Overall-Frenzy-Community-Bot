@@ -89,13 +89,15 @@ async def warn(interaction:discord.Interaction, member:discord.Member, reason:st
 
 @bot.tree.command(description="Remove a specific warning from a member.")
 @app_commands.check(is_head_moderator)
-async def unwarn(interaction:discord.Interaction, member:discord.Member):
+async def unwarn(interaction:discord.Interaction, member:discord.Member, warning_number:int):
     k=str(member.id)
     if k not in warnings or not warnings[k]:
         await interaction.response.send_message("No warnings."); return
-    removed=warnings[k].pop()
+    if warning_number < 1 or warning_number > len(warnings[k]):
+        await interaction.response.send_message("Invalid warning number."); return
+    removed=warnings[k].pop(warning_number - 1)
     save()
-    await interaction.response.send_message(f"Removed warning: {removed}")
+    await interaction.response.send_message(f"Removed warning {warning_number}: {removed}")
 
 @bot.tree.command(name="warnlist", description="Show all warnings for a member.")
 @app_commands.check(is_head_moderator)
