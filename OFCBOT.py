@@ -18,6 +18,13 @@ if os.path.exists(WARN_FILE):
 def save():
     with open(WARN_FILE,"w") as f: json.dump(warnings,f,indent=2)
 
+MODERATOR_ROLE_ID = 1522941925819416688
+HEAD_MODERATOR_ROLE_ID = 1522941922371436707
+HEAD_ADMIN_ROLE_ID = 1522941920740118669
+
+def has_role(interaction: discord.Interaction, role_id: int):
+    return isinstance(interaction.user, discord.Member) and any(role.id == role_id for role in interaction.user.roles)
+
 def parse_duration(s):
     m=re.fullmatch(r"(\d+)([smhd])",s.lower().strip())
     if not m: return None
@@ -31,7 +38,7 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
 
 @bot.tree.command()
-@app_commands.checks.has_permissions(moderate_members=True)
+@app_commands.check(lambda interaction: has_role(interaction, MODERATOR_ROLE_ID))
 async def mute(interaction:discord.Interaction, member:discord.Member, duration:str, reason:str="No reason provided"):
     td=parse_duration(duration)
     if not td:
@@ -40,13 +47,13 @@ async def mute(interaction:discord.Interaction, member:discord.Member, duration:
     await interaction.response.send_message(f"Muted {member.mention} for {duration}. Reason: {reason}")
 
 @bot.tree.command()
-@app_commands.checks.has_permissions(moderate_members=True)
+@app_commands.check(lambda interaction: has_role(interaction, MODERATOR_ROLE_ID))
 async def unmute(interaction:discord.Interaction, member:discord.Member):
     await member.timeout(None)
     await interaction.response.send_message(f"Unmuted {member.mention}")
 
 @bot.tree.command()
-@app_commands.checks.has_permissions(moderate_members=True)
+@app_commands.check(lambda interaction: has_role(interaction, HEAD_MODERATOR_ROLE_ID))
 async def warn(interaction:discord.Interaction, member:discord.Member, reason:str):
     k=str(member.id)
     warnings.setdefault(k,[]).append(reason)
@@ -54,7 +61,7 @@ async def warn(interaction:discord.Interaction, member:discord.Member, reason:st
     await interaction.response.send_message(f"Warned {member.mention}: {reason}")
 
 @bot.tree.command()
-@app_commands.checks.has_permissions(moderate_members=True)
+@app_commands.check(lambda interaction: has_role(interaction, HEAD_MODERATOR_ROLE_ID))
 async def unwarn(interaction:discord.Interaction, member:discord.Member):
     k=str(member.id)
     if k not in warnings or not warnings[k]:
@@ -64,7 +71,7 @@ async def unwarn(interaction:discord.Interaction, member:discord.Member):
     await interaction.response.send_message(f"Removed warning: {removed}")
 
 @bot.tree.command(name="warnlist")
-@app_commands.checks.has_permissions(moderate_members=True)
+@app_commands.check(lambda interaction: has_role(interaction, HEAD_MODERATOR_ROLE_ID))
 async def warnlist(interaction:discord.Interaction, member:discord.Member):
     lst=warnings.get(str(member.id),[])
     await interaction.response.send_message("\n".join(f"{i+1}. {w}" for i,w in enumerate(lst)) if lst else "No warnings.")
@@ -76,13 +83,13 @@ async def kick(interaction:discord.Interaction, member:discord.Member, reason:st
     await interaction.response.send_message(f"Kicked {member.mention}")
 
 @bot.tree.command()
-@app_commands.checks.has_permissions(ban_members=True)
+@app_commands.check(lambda interaction: has_role(interaction, HEAD_ADMIN_ROLE_ID))
 async def ban(interaction:discord.Interaction, member:discord.Member, reason:str="No reason"):
     await member.ban(reason=reason)
     await interaction.response.send_message(f"Banned {member.mention}")
 
 @bot.tree.command()
-@app_commands.checks.has_permissions(ban_members=True)
+@app_commands.check(lambda interaction: has_role(interaction, HEAD_ADMIN_ROLE_ID))
 async def unban(interaction:discord.Interaction, user_id:str):
     user=await bot.fetch_user(int(user_id))
     await interaction.guild.unban(user)
