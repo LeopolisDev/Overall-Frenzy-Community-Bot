@@ -87,7 +87,7 @@ async def warn(interaction:discord.Interaction, member:discord.Member, reason:st
     save()
     await interaction.response.send_message(f"Warned {member.mention}: {reason}")
 
-@bot.tree.command(description="Remove the latest warning from a member.")
+@bot.tree.command(description="Remove a specific warning from a member.")
 @app_commands.check(is_head_moderator)
 async def unwarn(interaction:discord.Interaction, member:discord.Member):
     k=str(member.id)
@@ -101,7 +101,11 @@ async def unwarn(interaction:discord.Interaction, member:discord.Member):
 @app_commands.check(is_head_moderator)
 async def warnlist(interaction:discord.Interaction, member:discord.Member):
     lst=warnings.get(str(member.id),[])
-    await interaction.response.send_message("\n".join(f"{i+1}. {w}" for i,w in enumerate(lst)) if lst else "No warnings.")
+    if not lst:
+        await interaction.response.send_message("No warnings.")
+        return
+    total=len(lst)
+    await interaction.response.send_message("\n".join(f"{i+1}/{total}. {w}" for i,w in enumerate(lst)))
 
 @bot.tree.command(description="Kick a member from the server.")
 @app_commands.checks.has_permissions(kick_members=True)
