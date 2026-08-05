@@ -4,7 +4,7 @@ from discord.ext import commands
 from datetime import timedelta
 import re, json, os
 
-TOKEN = "MTQ4MjAxNTI4MjUyNzQ3MzY3NA.GjfxC-.2goU03jkXoUm_bhhqTvgQEhloOrxVZr7OeC5m4"
+TOKEN = "MY_BOT_TOKEN"
 
 intents = discord.Intents.default()
 intents.members = True
