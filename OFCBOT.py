@@ -69,7 +69,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 async def mute(interaction:discord.Interaction, member:discord.Member, duration:str, reason:str="No reason provided"):
     td=parse_duration(duration)
     if not td:
-        await interaction.response.send_message("Invalid duration. Use 30s,5m,2h,7d (max 14d).",ephemeral=True); return
+        await interaction.response.send_message("Invalid duration. Use for example 1s,1m,1h,1d (max 14d).",ephemeral=True); return
     await member.timeout(td,reason=reason)
     await interaction.response.send_message(f"Muted {member.mention} for {duration}. Reason: {reason}")
 
@@ -87,17 +87,15 @@ async def warn(interaction:discord.Interaction, member:discord.Member, reason:st
     save()
     await interaction.response.send_message(f"Warned {member.mention}: {reason}")
 
-@bot.tree.command(description="Remove a specific warning from a member.")
+@bot.tree.command(description="Remove the latest warning from a member.")
 @app_commands.check(is_head_moderator)
-async def unwarn(interaction:discord.Interaction, member:discord.Member, warning_number:int):
+async def unwarn(interaction:discord.Interaction, member:discord.Member):
     k=str(member.id)
     if k not in warnings or not warnings[k]:
         await interaction.response.send_message("No warnings."); return
-    if warning_number < 1 or warning_number > len(warnings[k]):
-        await interaction.response.send_message("Invalid warning number."); return
-    removed=warnings[k].pop(warning_number - 1)
+    removed=warnings[k].pop()
     save()
-    await interaction.response.send_message(f"Removed warning {warning_number}: {removed}")
+    await interaction.response.send_message(f"Removed warning: {removed}")
 
 @bot.tree.command(name="warnlist", description="Show all warnings for a member.")
 @app_commands.check(is_head_moderator)
