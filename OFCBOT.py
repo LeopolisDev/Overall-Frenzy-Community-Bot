@@ -21,6 +21,8 @@ def save():
 MODERATOR_ROLE_ID = 1522941925819416688
 HEAD_MODERATOR_ROLE_ID = 1522941922371436707
 HEAD_ADMIN_ROLE_ID = 1522941920740118669
+ADMIN_ROLE_ID = 1522941921717391411
+LOG_CHANNEL_ID = 1534575514432573470
 
 async def has_role(interaction: discord.Interaction, role_id: int):
     if interaction.guild is None:
@@ -41,6 +43,20 @@ async def is_head_moderator(interaction: discord.Interaction):
 
 async def is_head_admin(interaction: discord.Interaction):
     return await has_role(interaction, HEAD_ADMIN_ROLE_ID)
+
+async def is_admin(interaction: discord.Interaction):
+    return await has_role(interaction, ADMIN_ROLE_ID)
+
+async def log_action(interaction: discord.Interaction, message: str):
+    if interaction.guild is None:
+        return
+    channel = interaction.guild.get_channel(LOG_CHANNEL_ID) or bot.get_channel(LOG_CHANNEL_ID)
+    if channel is None:
+        try:
+            channel = await interaction.guild.fetch_channel(LOG_CHANNEL_ID)
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+            return
+    await channel.send(message)
 
 def parse_duration(s):
     m=re.fullmatch(r"(\d+)([smhd])",s.lower().strip())
@@ -72,12 +88,14 @@ async def mute(interaction:discord.Interaction, member:discord.Member, duration:
         await interaction.response.send_message("Invalid duration. Use for example 1s,1m,1h,1d (max 14d).",ephemeral=True); return
     await member.timeout(td,reason=reason)
     await interaction.response.send_message(f"Muted {member.mention} for {duration}. Reason: {reason}")
+    await log_action(interaction, f"MUTE | {interaction.user} -> {member} | Duration: {duration} | Reason: {reason}")
 
 @bot.tree.command(description="Remove a member's timeout.")
 @app_commands.check(is_moderator)
 async def unmute(interaction:discord.Interaction, member:discord.Member):
     await member.timeout(None)
     await interaction.response.send_message(f"Unmuted {member.mention}")
+    await log_action(interaction, f"UNMUTE | {interaction.user} -> {member}")
 
 @bot.tree.command(description="Add a warning to a member.")
 @app_commands.check(is_head_moderator)
@@ -86,6 +104,7 @@ async def warn(interaction:discord.Interaction, member:discord.Member, reason:st
     warnings.setdefault(k,[]).append(reason)
     save()
     await interaction.response.send_message(f"Warned {member.mention}: {reason}")
+    await log_action(interaction, f"WARN | {interaction.user} -> {member} | Reason: {reason}")
 
 @bot.tree.command(description="Remove a specific warning from a member.")
 @app_commands.check(is_head_moderator)
@@ -98,6 +117,7 @@ async def unwarn(interaction:discord.Interaction, member:discord.Member, warning
     removed=warnings[k].pop(warning_number - 1)
     save()
     await interaction.response.send_message(f"Removed warning {warning_number}: {removed}")
+    await log_action(interaction, f"UNWARN | {interaction.user} -> {member} | Warning {warning_number}: {removed}")
 
 @bot.tree.command(name="warnlist", description="Show all warnings for a member.")
 @app_commands.check(is_head_moderator)
@@ -108,24 +128,28 @@ async def warnlist(interaction:discord.Interaction, member:discord.Member):
         return
     total=len(lst)
     await interaction.response.send_message("\n".join(f"{i+1}/{total}. {w}" for i,w in enumerate(lst)))
+    await log_action(interaction, f"WARNLIST | {interaction.user} viewed warnings for {member}")
 
 @bot.tree.command(description="Kick a member from the server.")
-@app_commands.checks.has_permissions(kick_members=True)
+@app_commands.check(is_admin)
 async def kick(interaction:discord.Interaction, member:discord.Member, reason:str="No reason"):
     await member.kick(reason=reason)
     await interaction.response.send_message(f"Kicked {member.mention}")
+    await log_action(interaction, f"KICK | {interaction.user} -> {member} | Reason: {reason}")
 
 @bot.tree.command(description="Ban a member from the server.")
-@app_commands.check(is_head_admin)
+@app_commands.check(is_admin)
 async def ban(interaction:discord.Interaction, member:discord.Member, reason:str="No reason"):
     await member.ban(reason=reason)
     await interaction.response.send_message(f"Banned {member.mention}")
+    await log_action(interaction, f"BAN | {interaction.user} -> {member} | Reason: {reason}")
 
 @bot.tree.command(description="Unban a user by ID.")
-@app_commands.check(is_head_admin)
+@app_commands.check(is_admin)
 async def unban(interaction:discord.Interaction, user_id:str):
     user=await bot.fetch_user(int(user_id))
     await interaction.guild.unban(user)
     await interaction.response.send_message(f"Unbanned {user}")
+    await log_action(interaction, f"UNBAN | {interaction.user} -> {user} (ID: {user_id})")
 
 bot.run(TOKEN)
