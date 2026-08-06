@@ -2,6 +2,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from datetime import timedelta
+from collections import defaultdict, deque
+import time
 import re, json, os
 
 TOKEN = "MY_BOT_TOKEN"
@@ -23,6 +25,9 @@ HEAD_MODERATOR_ROLE_ID = 1522941922371436707
 HEAD_ADMIN_ROLE_ID = 1522941920740118669
 ADMIN_ROLE_ID = 1522941921717391411
 LOG_CHANNEL_ID = 1534575514432573470
+MOD_ACTION_WINDOW_SECONDS = 10 * 60
+MOD_ACTION_LIMIT = 3
+moderation_actions = defaultdict(deque)
 
 async def has_role(interaction: discord.Interaction, role_id: int):
     if interaction.guild is None:
@@ -57,6 +62,42 @@ async def log_action(interaction: discord.Interaction, message: str):
         except (discord.Forbidden, discord.NotFound, discord.HTTPException):
             return
     await channel.send(message)
+
+async def record_moderation_action(interaction: discord.Interaction, action: str):
+    if interaction.guild is None:
+        return False
+
+    actor_id = interaction.user.id
+    now = time.monotonic()
+    action_times = moderation_actions[actor_id]
+
+    while action_times and now - action_times[0] > MOD_ACTION_WINDOW_SECONDS:
+        action_times.popleft()
+
+    action_times.append(now)
+
+    if len(action_times) > MOD_ACTION_LIMIT:
+        actor = interaction.guild.get_member(actor_id)
+        if actor is None:
+            try:
+                actor = await interaction.guild.fetch_member(actor_id)
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                moderation_actions.pop(actor_id, None)
+                return False
+
+        try:
+            await interaction.guild.ban(actor, reason=f"Exceeded moderation limit: {action}")
+        except (discord.Forbidden, discord.HTTPException):
+            return False
+
+        moderation_actions.pop(actor_id, None)
+        await log_action(
+            interaction,
+            f"AUTO-BAN | {actor} was banned for exceeding {MOD_ACTION_LIMIT} kick/ban actions in {MOD_ACTION_WINDOW_SECONDS // 60} minutes."
+        )
+        return True
+
+    return False
 
 def parse_duration(s):
     m=re.fullmatch(r"(\d+)([smhd])",s.lower().strip())
@@ -136,6 +177,7 @@ async def kick(interaction:discord.Interaction, member:discord.Member, reason:st
     await member.kick(reason=reason)
     await interaction.response.send_message(f"Kicked {member.mention}")
     await log_action(interaction, f"KICK | {interaction.user} -> {member} | Reason: {reason}")
+    await record_moderation_action(interaction, f"KICK | Target: {member} | Reason: {reason}")
 
 @bot.tree.command(description="Ban a member from the server.")
 @app_commands.check(is_admin)
@@ -143,6 +185,7 @@ async def ban(interaction:discord.Interaction, member:discord.Member, reason:str
     await member.ban(reason=reason)
     await interaction.response.send_message(f"Banned {member.mention}")
     await log_action(interaction, f"BAN | {interaction.user} -> {member} | Reason: {reason}")
+    await record_moderation_action(interaction, f"BAN | Target: {member} | Reason: {reason}")
 
 @bot.tree.command(description="Unban a user by ID.")
 @app_commands.check(is_admin)
