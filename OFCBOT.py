@@ -1,4 +1,5 @@
 import discord
+import aiohttp
 from discord import app_commands
 from discord.ext import commands
 from datetime import timedelta
@@ -7,12 +8,29 @@ import time
 import re, json, os
 
 TOKEN = "MY_BOT_TOKEN"
-JUMPY_MEDIA_URL = "https://images-ext-1.discordapp.net/external/4x2JsFTeRKzvt9EWH9YuAKlDLrJm1RoCAZPlzb0FCPQ/%3Fsize%3D4096/https/cdn.discordapp.com/avatars/1076540096024678461/40325a3d71d1818cb65921a157eafa6e.png?format=webp&quality=lossless"
+LOG_WEBHOOK_URL = "https://discord.com/api/webhooks/1535194115459911700/9GLQXqSDt_kfWgjh4S2w-a2EzFJ3vvMNP0ZiUFAEEkxsULzpVYHun6DJZ8C1WsEhdY_-"
 
 intents = discord.Intents.default()
 intents.members = True
-intents.message_content = True
-bot = commands.Bot(intents=intents, command_prefix="!")
+
+log_webhook_session = None
+log_webhook = None
+
+
+class Bot(commands.Bot):
+    async def setup_hook(self):
+        global log_webhook_session, log_webhook
+        log_webhook_session = aiohttp.ClientSession()
+        log_webhook = discord.Webhook.from_url(LOG_WEBHOOK_URL, session=log_webhook_session)
+
+    async def close(self):
+        global log_webhook_session
+        await super().close()
+        if log_webhook_session is not None and not log_webhook_session.closed:
+            await log_webhook_session.close()
+
+
+bot = Bot(intents=intents, command_prefix="!")
 
 WARN_FILE="warnings.json"
 warnings={}
@@ -26,7 +44,6 @@ MODERATOR_ROLE_ID = 1522941925819416688
 HEAD_MODERATOR_ROLE_ID = 1522941922371436707
 HEAD_ADMIN_ROLE_ID = 1522941920740118669
 ADMIN_ROLE_ID = 1522941921717391411
-LOG_CHANNEL_ID = 1534575514432573470
 MOD_ACTION_WINDOW_SECONDS = 10 * 60
 MOD_ACTION_LIMIT = 3
 moderation_actions = defaultdict(deque)
@@ -55,15 +72,10 @@ async def is_admin(interaction: discord.Interaction):
     return await has_role(interaction, ADMIN_ROLE_ID)
 
 async def log_action(interaction: discord.Interaction, message: str):
-    if interaction.guild is None:
+    if interaction.guild is None or log_webhook is None:
         return
-    channel = interaction.guild.get_channel(LOG_CHANNEL_ID) or bot.get_channel(LOG_CHANNEL_ID)
-    if channel is None:
-        try:
-            channel = await interaction.guild.fetch_channel(LOG_CHANNEL_ID)
-        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-            return
-    await channel.send(message)
+    embed = discord.Embed(description=message, color=discord.Color.red())
+    await log_webhook.send(embed=embed, username="OFC Bot Logs")
 
 async def record_moderation_action(interaction: discord.Interaction, action: str):
     if interaction.guild is None:
@@ -112,17 +124,6 @@ def parse_duration(s):
 async def on_ready():
     await bot.tree.sync()
     print(f"Logged in as {bot.user}")
-
-
-@bot.event
-async def on_message(message: discord.Message):
-    if message.author.bot:
-        return
-
-    if re.search(r"\bfurry\b", message.content, re.IGNORECASE):
-        await message.channel.send(JUMPY_MEDIA_URL)
-
-    await bot.process_commands(message)
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
