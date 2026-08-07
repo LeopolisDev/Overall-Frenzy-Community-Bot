@@ -7,9 +7,11 @@ import time
 import re, json, os
 
 TOKEN = "MY_BOT_TOKEN"
+JUMPY_MEDIA_URL = "https://images-ext-1.discordapp.net/external/4x2JsFTeRKzvt9EWH9YuAKlDLrJm1RoCAZPlzb0FCPQ/%3Fsize%3D4096/https/cdn.discordapp.com/avatars/1076540096024678461/40325a3d71d1818cb65921a157eafa6e.png?format=webp&quality=lossless"
 
 intents = discord.Intents.default()
 intents.members = True
+intents.message_content = True
 bot = commands.Bot(intents=intents, command_prefix="!")
 
 WARN_FILE="warnings.json"
@@ -110,6 +112,17 @@ def parse_duration(s):
 async def on_ready():
     await bot.tree.sync()
     print(f"Logged in as {bot.user}")
+
+
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+
+    if re.search(r"\bfurry\b", message.content, re.IGNORECASE):
+        await message.channel.send(JUMPY_MEDIA_URL)
+
+    await bot.process_commands(message)
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
