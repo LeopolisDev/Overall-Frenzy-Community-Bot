@@ -45,6 +45,7 @@ HEAD_MODERATOR_ROLE_ID = 1522941922371436707
 HEAD_ADMIN_ROLE_ID = 1522941920740118669
 ADMIN_ROLE_ID = 1522941921717391411
 OWNER_ROLE_ID = 1528793993712894003
+TEMP_MESSAGE_DELETE_AFTER = 10
 MOD_ACTION_WINDOW_SECONDS = 10 * 60
 MOD_ACTION_LIMIT = 3
 moderation_actions = defaultdict(deque)
@@ -244,9 +245,15 @@ async def on_ready():
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.CheckFailure):
         if interaction.response.is_done():
-            await interaction.followup.send("You do not have permission to use this command.", ephemeral=True)
+            await interaction.followup.send(
+                "You do not have permission to use this command.",
+                delete_after=TEMP_MESSAGE_DELETE_AFTER
+            )
         else:
-            await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+            await interaction.response.send_message(
+                "You do not have permission to use this command.",
+                delete_after=TEMP_MESSAGE_DELETE_AFTER
+            )
         return
     raise error
 
@@ -255,16 +262,25 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 async def mute(interaction:discord.Interaction, member:discord.Member, duration:str, reason:str="No reason provided"):
     td=parse_duration(duration)
     if not td:
-        await interaction.response.send_message("Invalid duration. Use for example 1s,1m,1h,1d (max 14d).",ephemeral=True); return
+        await interaction.response.send_message(
+            "Invalid duration. Use for example 1s,1m,1h,1d (max 14d).",
+            delete_after=TEMP_MESSAGE_DELETE_AFTER
+        ); return
     await member.timeout(td,reason=reason)
-    await interaction.response.send_message(f"Muted {member.mention} for {duration}. Reason: {reason}")
+    await interaction.response.send_message(
+        f"Muted {member.mention} for {duration}. Reason: {reason}",
+        delete_after=TEMP_MESSAGE_DELETE_AFTER
+    )
     await log_action(interaction, f"MUTE | {interaction.user} -> {member} | Duration: {duration} | Reason: {reason}")
 
 @bot.tree.command(description="Remove a member's timeout.")
 @app_commands.check(is_moderator)
 async def unmute(interaction:discord.Interaction, member:discord.Member):
     await member.timeout(None)
-    await interaction.response.send_message(f"Unmuted {member.mention}")
+    await interaction.response.send_message(
+        f"Unmuted {member.mention}",
+        delete_after=TEMP_MESSAGE_DELETE_AFTER
+    )
     await log_action(interaction, f"UNMUTE | {interaction.user} -> {member}")
 
 @bot.tree.command(description="Add a warning to a member.")
@@ -273,7 +289,10 @@ async def warn(interaction:discord.Interaction, member:discord.Member, reason:st
     k=str(member.id)
     warnings.setdefault(k,[]).append(reason)
     save()
-    await interaction.response.send_message(f"Warned {member.mention}: {reason}")
+    await interaction.response.send_message(
+        f"Warned {member.mention}: {reason}",
+        delete_after=TEMP_MESSAGE_DELETE_AFTER
+    )
     await log_action(interaction, f"WARN | {interaction.user} -> {member} | Reason: {reason}")
 
 @bot.tree.command(description="Remove a specific warning from a member.")
@@ -281,12 +300,15 @@ async def warn(interaction:discord.Interaction, member:discord.Member, reason:st
 async def unwarn(interaction:discord.Interaction, member:discord.Member, warning_number:int):
     k=str(member.id)
     if k not in warnings or not warnings[k]:
-        await interaction.response.send_message("No warnings."); return
+        await interaction.response.send_message("No warnings.", delete_after=TEMP_MESSAGE_DELETE_AFTER); return
     if warning_number < 1 or warning_number > len(warnings[k]):
-        await interaction.response.send_message("Invalid warning number."); return
+        await interaction.response.send_message("Invalid warning number.", delete_after=TEMP_MESSAGE_DELETE_AFTER); return
     removed=warnings[k].pop(warning_number - 1)
     save()
-    await interaction.response.send_message(f"Removed warning {warning_number}: {removed}")
+    await interaction.response.send_message(
+        f"Removed warning {warning_number}: {removed}",
+        delete_after=TEMP_MESSAGE_DELETE_AFTER
+    )
     await log_action(interaction, f"UNWARN | {interaction.user} -> {member} | Warning {warning_number}: {removed}")
 
 @bot.tree.command(name="warnlist", description="Show all warnings for a member.")
@@ -294,17 +316,23 @@ async def unwarn(interaction:discord.Interaction, member:discord.Member, warning
 async def warnlist(interaction:discord.Interaction, member:discord.Member):
     lst=warnings.get(str(member.id),[])
     if not lst:
-        await interaction.response.send_message("No warnings.")
+        await interaction.response.send_message("No warnings.", delete_after=TEMP_MESSAGE_DELETE_AFTER)
         return
     total=len(lst)
-    await interaction.response.send_message("\n".join(f"{i+1}/{total}. {w}" for i,w in enumerate(lst)))
+    await interaction.response.send_message(
+        "\n".join(f"{i+1}/{total}. {w}" for i,w in enumerate(lst)),
+        delete_after=TEMP_MESSAGE_DELETE_AFTER
+    )
     await log_action(interaction, f"WARNLIST | {interaction.user} viewed warnings for {member}")
 
 @bot.tree.command(description="Kick a member from the server.")
 @app_commands.check(is_admin)
 async def kick(interaction:discord.Interaction, member:discord.Member, reason:str="No reason"):
     await member.kick(reason=reason)
-    await interaction.response.send_message(f"Kicked {member.mention}")
+    await interaction.response.send_message(
+        f"Kicked {member.mention}",
+        delete_after=TEMP_MESSAGE_DELETE_AFTER
+    )
     await log_action(interaction, f"KICK | {interaction.user} -> {member} | Reason: {reason}")
     await record_moderation_action(interaction, f"KICK | Target: {member} | Reason: {reason}")
 
@@ -312,7 +340,10 @@ async def kick(interaction:discord.Interaction, member:discord.Member, reason:st
 @app_commands.check(is_admin)
 async def ban(interaction:discord.Interaction, member:discord.Member, reason:str="No reason"):
     await member.ban(reason=reason)
-    await interaction.response.send_message(f"Banned {member.mention}")
+    await interaction.response.send_message(
+        f"Banned {member.mention}",
+        delete_after=TEMP_MESSAGE_DELETE_AFTER
+    )
     await log_action(interaction, f"BAN | {interaction.user} -> {member} | Reason: {reason}")
     await record_moderation_action(interaction, f"BAN | Target: {member} | Reason: {reason}")
 
@@ -321,21 +352,27 @@ async def ban(interaction:discord.Interaction, member:discord.Member, reason:str
 async def unban(interaction:discord.Interaction, user_id:str):
     user=await bot.fetch_user(int(user_id))
     await interaction.guild.unban(user)
-    await interaction.response.send_message(f"Unbanned {user}")
+    await interaction.response.send_message(
+        f"Unbanned {user}",
+        delete_after=TEMP_MESSAGE_DELETE_AFTER
+    )
     await log_action(interaction, f"UNBAN | {interaction.user} -> {user} (ID: {user_id})")
 
 @bot.tree.command(description="Delete a user's messages in one channel or across all channels.")
 @app_commands.check(is_owner)
 async def purge(interaction: discord.Interaction, user: str, channel: str, amount: app_commands.Range[int, 1, 1000]):
     if interaction.guild is None:
-        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        await interaction.response.send_message(
+            "This command can only be used in a server.",
+            delete_after=TEMP_MESSAGE_DELETE_AFTER
+        )
         return
 
     target_user_id, target_label = await resolve_target_user_id(interaction.guild, user)
     if target_user_id is None:
         await interaction.response.send_message(
             "I could not resolve that user. Use a member mention, username, or raw user ID.",
-            ephemeral=True
+            delete_after=TEMP_MESSAGE_DELETE_AFTER
         )
         return
 
@@ -343,24 +380,27 @@ async def purge(interaction: discord.Interaction, user: str, channel: str, amoun
     if channel_scope is None:
         await interaction.response.send_message(
             "I could not resolve that channel. Use a channel mention, channel name, channel ID, or `all`.",
-            ephemeral=True
+            delete_after=TEMP_MESSAGE_DELETE_AFTER
         )
         return
 
-    await interaction.response.defer(ephemeral=True, thinking=True)
+    await interaction.response.defer(thinking=True)
 
     try:
         messages, skipped_channels = await collect_purge_targets(interaction.guild, target_user_id, channel_scope, amount)
     except (discord.Forbidden, discord.HTTPException):
         scope_name = "that channel" if channel_scope != "all" else "one or more channels"
-        await interaction.followup.send(f"I couldn't read messages in {scope_name}.", ephemeral=True)
+        await interaction.followup.send(
+            f"I couldn't read messages in {scope_name}.",
+            delete_after=TEMP_MESSAGE_DELETE_AFTER
+        )
         return
 
     if not messages:
         scope_name = "all channels" if channel_scope == "all" else f"#{channel_scope.name}"
         await interaction.followup.send(
             f"I didn't find any messages from {target_label} in {scope_name}.",
-            ephemeral=True
+            delete_after=TEMP_MESSAGE_DELETE_AFTER
         )
         return
 
@@ -370,7 +410,7 @@ async def purge(interaction: discord.Interaction, user: str, channel: str, amoun
 
     await interaction.followup.send(
         f"Deleted {deleted_count} message(s) from {target_label} in {scope_name}.{skipped_note}",
-        ephemeral=True
+        delete_after=TEMP_MESSAGE_DELETE_AFTER
     )
     await log_action(
         interaction,
