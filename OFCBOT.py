@@ -44,6 +44,7 @@ MODERATOR_ROLE_ID = 1522941925819416688
 HEAD_MODERATOR_ROLE_ID = 1522941922371436707
 HEAD_ADMIN_ROLE_ID = 1522941920740118669
 ADMIN_ROLE_ID = 1522941921717391411
+OWNER_ROLE_ID = 1528793993712894003
 MOD_ACTION_WINDOW_SECONDS = 10 * 60
 MOD_ACTION_LIMIT = 3
 moderation_actions = defaultdict(deque)
@@ -70,6 +71,9 @@ async def is_head_admin(interaction: discord.Interaction):
 
 async def is_admin(interaction: discord.Interaction):
     return await has_role(interaction, ADMIN_ROLE_ID)
+
+async def is_owner(interaction: discord.Interaction):
+    return await has_role(interaction, OWNER_ROLE_ID)
 
 async def log_action(interaction: discord.Interaction, message: str):
     if interaction.guild is None or log_webhook is None:
@@ -119,6 +123,117 @@ def parse_duration(s):
     n,u=int(m.group(1)),m.group(2)
     td={"s":timedelta(seconds=n),"m":timedelta(minutes=n),"h":timedelta(hours=n),"d":timedelta(days=n)}[u]
     return td if td<=timedelta(days=14) else None
+
+def _extract_id(value: str):
+    value = value.strip()
+    mention_match = re.fullmatch(r"<@!?(\d+)>", value) or re.fullmatch(r"<#(\d+)>", value)
+    if mention_match:
+        return int(mention_match.group(1))
+    if value.isdigit():
+        return int(value)
+    return None
+
+def _all_message_channels(guild: discord.Guild):
+    channels = list(guild.text_channels)
+    channels.extend(getattr(guild, "threads", []))
+    return sorted(
+        channels,
+        key=lambda channel: ((channel.last_message_id or 0), getattr(channel, "position", 0)),
+        reverse=True
+    )
+
+async def resolve_target_user_id(guild: discord.Guild, user_ref: str):
+    user_id = _extract_id(user_ref)
+    if user_id is not None:
+        member = guild.get_member(user_id)
+        if member is not None:
+            return user_id, str(member)
+        return user_id, f"User ID {user_id}"
+
+    lowered = user_ref.casefold().strip()
+    for member in guild.members:
+        if (
+            member.name.casefold() == lowered
+            or member.display_name.casefold() == lowered
+            or str(member).casefold() == lowered
+        ):
+            return member.id, str(member)
+
+    return None, None
+
+async def resolve_channel_scope(guild: discord.Guild, channel_ref: str):
+    if channel_ref.strip().casefold() == "all":
+        return "all", None
+
+    channel_id = _extract_id(channel_ref)
+    channels = _all_message_channels(guild)
+    if channel_id is not None:
+        for channel in channels:
+            if channel.id == channel_id:
+                return channel, None
+
+    lowered = channel_ref.strip().casefold()
+    for channel in channels:
+        if channel.name.casefold() == lowered:
+            return channel, None
+
+    return None, None
+
+async def collect_purge_targets(guild: discord.Guild, target_user_id: int, channel_scope, amount: int):
+    collected = []
+    skipped_channels = 0
+    channels = _all_message_channels(guild) if channel_scope == "all" else [channel_scope]
+
+    for channel in channels:
+        try:
+            async for message in channel.history(limit=None, oldest_first=False):
+                if message.author.id == target_user_id:
+                    collected.append(message)
+                    if len(collected) >= amount:
+                        return collected, skipped_channels
+        except (discord.Forbidden, discord.HTTPException):
+            if channel_scope == "all":
+                skipped_channels += 1
+                continue
+            raise
+
+    return collected, skipped_channels
+
+async def delete_purge_messages(messages):
+    deleted = 0
+    recent_cutoff = discord.utils.utcnow() - timedelta(days=14)
+    by_channel = defaultdict(list)
+
+    for message in messages:
+        by_channel[message.channel].append(message)
+
+    for channel, channel_messages in by_channel.items():
+        recent_messages = [message for message in channel_messages if message.created_at >= recent_cutoff]
+        old_messages = [message for message in channel_messages if message.created_at < recent_cutoff]
+
+        for start in range(0, len(recent_messages), 100):
+            batch = recent_messages[start:start + 100]
+            if not batch:
+                continue
+            try:
+                await channel.delete_messages(batch)
+                deleted += len(batch)
+            except (discord.Forbidden, discord.HTTPException):
+                for message in batch:
+                    try:
+                        await message.delete()
+                        deleted += 1
+                    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                        pass
+
+        for message in old_messages:
+            try:
+                await message.delete()
+                deleted += 1
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                pass
+
+    return deleted
 
 @bot.event
 async def on_ready():
@@ -208,5 +323,59 @@ async def unban(interaction:discord.Interaction, user_id:str):
     await interaction.guild.unban(user)
     await interaction.response.send_message(f"Unbanned {user}")
     await log_action(interaction, f"UNBAN | {interaction.user} -> {user} (ID: {user_id})")
+
+@bot.tree.command(description="Delete a user's messages in one channel or across all channels.")
+@app_commands.check(is_owner)
+async def purge(interaction: discord.Interaction, user: str, channel: str, amount: app_commands.Range[int, 1, 1000]):
+    if interaction.guild is None:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
+    target_user_id, target_label = await resolve_target_user_id(interaction.guild, user)
+    if target_user_id is None:
+        await interaction.response.send_message(
+            "I could not resolve that user. Use a member mention, username, or raw user ID.",
+            ephemeral=True
+        )
+        return
+
+    channel_scope, _ = await resolve_channel_scope(interaction.guild, channel)
+    if channel_scope is None:
+        await interaction.response.send_message(
+            "I could not resolve that channel. Use a channel mention, channel name, channel ID, or `all`.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    try:
+        messages, skipped_channels = await collect_purge_targets(interaction.guild, target_user_id, channel_scope, amount)
+    except (discord.Forbidden, discord.HTTPException):
+        scope_name = "that channel" if channel_scope != "all" else "one or more channels"
+        await interaction.followup.send(f"I couldn't read messages in {scope_name}.", ephemeral=True)
+        return
+
+    if not messages:
+        scope_name = "all channels" if channel_scope == "all" else f"#{channel_scope.name}"
+        await interaction.followup.send(
+            f"I didn't find any messages from {target_label} in {scope_name}.",
+            ephemeral=True
+        )
+        return
+
+    deleted_count = await delete_purge_messages(messages)
+    scope_name = "all channels" if channel_scope == "all" else f"#{channel_scope.name}"
+    skipped_note = f" Skipped {skipped_channels} channel(s) I couldn't read." if skipped_channels else ""
+
+    await interaction.followup.send(
+        f"Deleted {deleted_count} message(s) from {target_label} in {scope_name}.{skipped_note}",
+        ephemeral=True
+    )
+    await log_action(
+        interaction,
+        f"PURGE | {interaction.user} -> {target_label} | Scope: {scope_name} | Requested: {amount} | Deleted: {deleted_count}"
+        + (f" | Skipped channels: {skipped_channels}" if skipped_channels else "")
+    )
 
 bot.run(TOKEN)
