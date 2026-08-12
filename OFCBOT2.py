@@ -16,8 +16,11 @@ class Bot(commands.Bot):
 bot = Bot(command_prefix="!", intents=intents)
 
 
-@bot.tree.command(name="ping", description="Mention the configured user multiple times.")
-@app_commands.describe(amount="How many times to ping the user (1-20)")
+@bot.tree.command(
+    name="ping",
+    description="Mention the configured user multiple times."
+)
+@app_commands.describe(amount="How many times to ping the user (1-100)")
 async def ping(interaction: discord.Interaction, amount: int):
 
     if interaction.guild is None:
@@ -27,20 +30,25 @@ async def ping(interaction: discord.Interaction, amount: int):
         )
         return
 
-    # Prevent accidental/excessive spam
     if amount < 1 or amount > 100:
         await interaction.response.send_message(
-            "Amount must be between 1 and 20.",
+            "Amount must be between 1 and 100.",
             ephemeral=True,
         )
         return
 
-    mentions = " ".join(f"<@{TARGET_USER_ID}>" for _ in range(amount))
-
+    # Send the first ping as the initial interaction response
     await interaction.response.send_message(
-        mentions,
+        f"<@{TARGET_USER_ID}>",
         allowed_mentions=discord.AllowedMentions(users=True),
     )
+
+    # Send the remaining pings as separate messages
+    for _ in range(amount - 1):
+        await interaction.followup.send(
+            f"<@{TARGET_USER_ID}>",
+            allowed_mentions=discord.AllowedMentions(users=True),
+        )
 
 
 @bot.event
