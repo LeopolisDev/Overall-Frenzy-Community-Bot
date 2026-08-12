@@ -1,5 +1,6 @@
 import discord
 import aiohttp
+import asyncio
 from discord import app_commands
 from discord.ext import commands
 from datetime import timedelta
@@ -46,6 +47,8 @@ HEAD_ADMIN_ROLE_ID = 1522941920740118669
 ADMIN_ROLE_ID = 1522941921717391411
 OWNER_ROLE_ID = 1528793993712894003
 TEMP_MESSAGE_DELETE_AFTER = 10
+PURGE_SCAN_CONCURRENCY = 4
+PURGE_DELETE_CONCURRENCY = 4
 MOD_ACTION_WINDOW_SECONDS = 10 * 60
 MOD_ACTION_LIMIT = 3
 moderation_actions = defaultdict(deque)
@@ -181,22 +184,57 @@ async def resolve_channel_scope(guild: discord.Guild, channel_ref: str):
     return None, None
 
 async def collect_purge_targets(guild: discord.Guild, target_user_id: int, channel_scope, amount: int):
+    if channel_scope == "all":
+        return await collect_purge_targets_all(guild, target_user_id, amount)
+    return await collect_purge_targets_in_channel(channel_scope, target_user_id, amount)
+
+async def collect_purge_targets_in_channel(channel, target_user_id: int, amount: int):
+    collected = []
+    async for message in channel.history(limit=None, oldest_first=False):
+        if message.author.id != target_user_id:
+            continue
+        collected.append(message)
+        if len(collected) >= amount:
+            break
+    return collected, 0
+
+async def collect_purge_targets_all(guild: discord.Guild, target_user_id: int, amount: int):
     collected = []
     skipped_channels = 0
-    channels = _all_message_channels(guild) if channel_scope == "all" else [channel_scope]
+    channels = _all_message_channels(guild)
+    done = asyncio.Event()
+    lock = asyncio.Lock()
+    scan_limit = asyncio.Semaphore(PURGE_SCAN_CONCURRENCY)
 
-    for channel in channels:
+    async def scan_channel(channel):
+        nonlocal skipped_channels
         try:
-            async for message in channel.history(limit=None, oldest_first=False):
-                if message.author.id == target_user_id:
-                    collected.append(message)
-                    if len(collected) >= amount:
-                        return collected, skipped_channels
+            async with scan_limit:
+                async for message in channel.history(limit=None, oldest_first=False):
+                    if done.is_set():
+                        return
+                    if message.author.id != target_user_id:
+                        continue
+
+                    async with lock:
+                        if len(collected) >= amount:
+                            done.set()
+                            return
+                        collected.append(message)
+                        if len(collected) >= amount:
+                            done.set()
+                            return
         except (discord.Forbidden, discord.HTTPException):
-            if channel_scope == "all":
+            async with lock:
                 skipped_channels += 1
-                continue
-            raise
+
+    tasks = [asyncio.create_task(scan_channel(channel)) for channel in channels]
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
 
     return collected, skipped_channels
 
@@ -208,7 +246,15 @@ async def delete_purge_messages(messages):
     for message in messages:
         by_channel[message.channel].append(message)
 
-    for channel, channel_messages in by_channel.items():
+    async def delete_message(message):
+        try:
+            await message.delete()
+            return 1
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+            return 0
+
+    async def delete_channel_messages(channel, channel_messages):
+        channel_deleted = 0
         recent_messages = [message for message in channel_messages if message.created_at >= recent_cutoff]
         old_messages = [message for message in channel_messages if message.created_at < recent_cutoff]
 
@@ -218,21 +264,25 @@ async def delete_purge_messages(messages):
                 continue
             try:
                 await channel.delete_messages(batch)
-                deleted += len(batch)
+                channel_deleted += len(batch)
             except (discord.Forbidden, discord.HTTPException):
-                for message in batch:
-                    try:
-                        await message.delete()
-                        deleted += 1
-                    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                        pass
+                batch_results = await asyncio.gather(*(delete_message(message) for message in batch))
+                channel_deleted += sum(batch_results)
 
-        for message in old_messages:
-            try:
-                await message.delete()
-                deleted += 1
-            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                pass
+        if old_messages:
+            delete_limit = asyncio.Semaphore(PURGE_DELETE_CONCURRENCY)
+
+            async def guarded_delete(message):
+                async with delete_limit:
+                    return await delete_message(message)
+
+            old_results = await asyncio.gather(*(guarded_delete(message) for message in old_messages))
+            channel_deleted += sum(old_results)
+
+        return channel_deleted
+
+    channel_results = await asyncio.gather(*(delete_channel_messages(channel, channel_messages) for channel, channel_messages in by_channel.items()))
+    deleted += sum(channel_results)
 
     return deleted
 
@@ -419,7 +469,11 @@ async def purge(interaction: discord.Interaction, user: str, channel: str, amoun
         )
         return
 
-    await interaction.response.defer(thinking=True)
+    scope_name = "all channels" if channel_scope == "all" else f"#{channel_scope.name}"
+    await interaction.response.send_message(
+        f"Purging up to {amount} message(s) from {target_label} in {scope_name}...",
+        delete_after=TEMP_MESSAGE_DELETE_AFTER
+    )
 
     try:
         messages, skipped_channels = await collect_purge_targets(interaction.guild, target_user_id, channel_scope, amount)
